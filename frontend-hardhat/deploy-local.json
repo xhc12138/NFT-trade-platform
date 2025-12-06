@@ -1,0 +1,14 @@
+{
+  "network": "localhost",
+  "owner": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+  "promptNFT": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853",
+  "imageNFT": "0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6",
+  "auctionFactory": "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318",
+  "auction": "0x8aCd85898458400f7Db866d53FCFF6f0D49741FF",
+  "tokenId": "1",
+  "cids": {
+    "promptCid": "QmPrompt_1764164226795",
+    "metaCid": "QmMeta_1764164226795",
+    "imgCid": "QmImg_1764164226795"
+  }
+}

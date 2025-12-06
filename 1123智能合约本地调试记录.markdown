@@ -1,0 +1,216 @@
+5017智能合约部署记录
+
+### 1. 部署命令
+
+```
+npx hardhat clean
+
+# 编译合约
+npx hardhat compile
+
+# 启动本地网络（终端1）
+npx hardhat node
+
+# 部署合约（终端2）
+npx hardhat run scripts/deploy.ts --network localhost
+```
+
+### 2. 测试命令
+
+```
+#1125新增
+npx hardhat test test/new.test.ts
+
+#npx hardhat test test/detailed.test.ts
+
+# 运行荷兰拍卖核心测试
+#npx hardhat test test/dutch_core.test.ts
+
+# 运行接口兼容性测试
+#npx hardhat test test/interface.test.ts
+```
+
+### 测试脚本中如何操纵合约
+
+在你提供的测试脚本（基于 Hardhat 和 ethers.js）中，操纵合约主要是通过以下方式进行的。这是一个典型的单元测试框架，使用 Mocha/Chai 结构。脚本模拟了本地以太坊网络环境（Hardhat node），部署合约，然后通过 ethers.js 的 API 与合约交互。以下是关键步骤的 breakdown：
+
+#### 1. **全局设置（beforeEach 钩子）**
+   - 这个钩子在每个测试用例（it）运行前执行，确保每个测试从干净的状态开始。
+   - **获取签名者（模拟账户）**：
+     - 使用 `ethers.getSigners()` 获取模拟账户：`owner` 是合约部署者（默认第一个账户），`user1` 和 `user2` 是其他测试账户。
+     - 这些账户用于模拟不同用户调用合约（通过 `.connect(signer)`）。
+   - **部署合约**：
+     - 使用 `ethers.getContractFactory("ContractName")` 获取合约工厂。
+     - 然后调用 `.deploy()` 或 `.deploy(params)` 部署：
+       - `PromptNFT`：无参数部署。
+       - `ImageNFT`：传入 `PromptNFT` 的地址作为参数（因为它依赖 PromptNFT）。
+       - `CreditManagement`：无参数。
+       - `AuctionFactory`：传入 `ImageNFT` 的地址。
+     - 部署后，合约实例（如 `promptNFT`）是一个 ethers.Contract 对象，可以调用其方法。
+
+#### 2. **操纵合约的具体方式**
+   - **调用合约方法**：
+     - 通过合约实例直接调用公共函数。例如：`await promptNFT.awardItem(owner.address, testCID);`（mint 一个 PromptNFT）。
+     - 如果需要从特定账户调用，使用 `.connect(signer)`：`await promptNFT.connect(owner).awardItem(...);`。
+     - 对于 payable 方法（如 bid()），添加 `{ value: ethers.utils.parseEther("1") }` 发送 ETH。
+   - **查询合约状态**：
+     - 调用 view 函数：如 `await promptNFT.getOnwerByCID(testCID);`。
+     - 使用标准 ERC721 方法：如 `await promptNFT.ownerOf(tokenId);` 检查所有者。
+   - **获取 tokenId**：
+     - 对于 PromptNFT：由于没有直接 getter，使用 `tokenOfOwnerByIndex(owner.address, 0)`（因为继承 ERC721Enumerable，只有一个 NFT 时 index=0）。
+     - 对于 ImageNFT：使用 `getTokenIdByCID(imageCID)`。
+   - **模拟时间和事件**：
+     - 使用 `ethers.provider.send("evm_increaseTime", [300])` 和 `evm_mine` 推进区块链时间（用于拍卖测试）。
+   - **批准和转移**：
+     - 调用 `approve(to, tokenId)` 批准转移。
+     - 调用 `transferFrom(from, to, tokenId)` 或 `safeTransferFrom(...)` 执行转移。
+   - **拍卖相关**：
+     - 调用 `auctionFactory.createAuction(duration, tokenId)` 创建拍卖，返回交易但不直接用；用 `getAunctionByTokenId(tokenId)` 获取拍卖地址。
+     - 附加 DutchAuction 工厂：`DutchAuction.attach(auctionAddr)` 获取拍卖实例。
+     - 批准：`imageNFT.approve(auctionAddr, tokenId)`。
+     - 出价：`auction.bid({ value: currentPrice })`。
+   - **断言（验证）**：
+     - 使用 Chai 的 `expect` 检查结果：如 `expect(await promptNFT.ownerOf(tokenId)).to.equal(user2.address);`。
+     - 对于预期失败：`await expect(...).to.be.revertedWith("error message");`。
+
+#### 3. **测试用例的具体操纵示例**
+   - **PromptNFT Transfers**：
+     - 创建 NFT（awardItem），获取 tokenId，批准，转移，检查 ownerOf 和 getOnwerByCID。
+   - **ImageNFT Transfers**：
+     - 先创建 PromptNFT，然后 ImageNFT（awardItem），获取 tokenId，批准，转移，检查 ownerOf。
+   - **Auction-Related Transfers**：
+     - 创建 NFT，创建拍卖，批准拍卖合约，推进时间，获取当前价格，出价，检查转移和结束状态。
+     - 失败案例：不批准，直接出价，期待 revert。
+
+整个脚本是同步/异步的（使用 async/await），模拟真实交互，但运行在本地网络上。CreditManagement 在这个脚本中部署但未使用，因为焦点是 NFT 转移。
+
+### 前端部署时应该怎么做
+
+智能合约部署后（使用 Hardhat scripts/deploy.ts），它成为区块链上的“黑盒”，但通过 ABI（Application Binary Interface，合约的 JSON 接口描述）和合约地址，前端可以与之交互。前端通常使用库如 ethers.js（推荐，现代）或 web3.js 来连接钱包（如 MetaMask），发送交易或查询状态。
+
+#### 1. **前提准备**
+   - **部署合约并获取地址**：
+     - 运行 `npx hardhat run scripts/deploy.ts --network localhost`（或真实网络如 sepolia/testnet）。
+     - 在 deploy.ts 中，打印合约地址（如 `console.log("PromptNFT deployed to:", promptNFT.address);`）。
+     - 对于依赖合约：ImageNFT 需要 PromptNFT 地址，AuctionFactory 需要 ImageNFT 地址。在 deploy.ts 中顺序部署并传入。
+     - DutchAuction 是动态创建的（通过 AuctionFactory.createAuction），每个拍卖有自己的地址。
+   - **生成 ABI**：
+     - Hardhat 编译后，在 `artifacts/contracts/ContractName.sol/ContractName.json` 中有 ABI（JSON 数组，描述所有公共函数）。
+     - 复制 ABI 到前端项目（或使用 typechain 生成 TypeScript 类型）。
+   - **前端框架**：假设 React/Vue 等，使用 ethers.js。安装：`npm install ethers`。
+   - **钱包集成**：使用 MetaMask 等。ethers.js 可以检测 `window.ethereum` 并请求连接。
+
+#### 2. **智能合约对外暴露的接口**
+合约的“接口”就是所有 public/external/view 函数（包括继承的 ERC721）。以下是每个合约的关键暴露方法（参数和返回类型基于代码）。前端调用时，需要 ABI 来描述这些。
+
+- **PromptNFT**（ERC721 兼容 NFT for prompts）：
+  - **Mint 创建**：`awardItem(address user, string cid)` returns uint256 tokenId。要求：cid 未存在。
+  - **查询所有者**：`getOnwerByCID(string cid)` returns address。（注意拼写错误：Onwer，应为 Owner；如果前端报错，检查）。
+  - **标准 ERC721 接口**（继承自 OpenZeppelin）：
+    - `ownerOf(uint256 tokenId)` returns address。
+    - `balanceOf(address owner)` returns uint256（拥有的 NFT 数量）。
+    - `tokenOfOwnerByIndex(address owner, uint256 index)` returns uint256（枚举拥有的 tokenId）。
+    - `transferFrom(address from, address to, uint256 tokenId)`（转移 NFT，需要 approve）。
+    - `safeTransferFrom(address from, address to, uint256 tokenId)`（安全转移）。
+    - `approve(address to, uint256 tokenId)`（批准他人转移你的 NFT）。
+    - `getApproved(uint256 tokenId)` returns address（谁被批准）。
+    - `setApprovalForAll(address operator, bool approved)`（批准运营商所有 NFT）。
+    - `tokenURI(uint256 tokenId)` returns string（元数据 URI，ipfs://cid）。
+    - 事件：Transfer, Approval 等（前端可监听）。
+
+- **ImageNFT**（ERC721 兼容 NFT for images，依赖 PromptNFT）：
+  - **查询 tokenId**：`getTokenIdByCID(string cid)` returns uint256。
+  - **Mint 创建**：`awardItem(address user, string metadatacid, string cid, string promptcid)` returns uint256。要求：用户拥有 promptcid，且 cid 未存在。
+  - **标准 ERC721 接口**：同上（ownerOf, transferFrom 等）。
+
+- **CreditManagement**（信用管理，非 NFT）：
+  - **更新月度信用**：`updateCredits()`（无参数，检查时间）。
+  - **更新每日信用（元签名）**：`updateCreditsMeta(UpdateCreditsRequest {address user, uint256 nonce}, bytes signature)`。
+  - **检查可更新**：`canUpdateCredit()` returns bool。
+  - **获取信用**：`getCredits()` returns uint256。
+  - **使用信用**：`useCredits(uint256 _amount)`。
+  - **购买信用**：`purchaseCredits()` payable（发送 ETH >= 0.0003 ETH）。
+  - **提取 ETH（仅 owner）**：`withdrawEther()`。
+  - 事件：CreditsPurchased, CreditsUsed（可监听）。
+
+- **AuctionFactory**（创建拍卖）：
+  - **创建拍卖**：`createAuction(uint duration, uint256 tokenId)` returns address（拍卖合约地址）。要求：tokenId 未在活跃拍卖中。
+  - **查询拍卖地址**：`getAunctionByTokenId(uint256 tokenId)` returns address。（注意拼写：Aunction，应为 Auction；前端 ABI 需匹配）。
+  - **获取拍卖列表**：`getAuctionByIndex(uint index)` returns address；`allAuctions()` returns address[]。
+
+- **DutchAuction**（每个拍卖实例，荷兰式拍卖）：
+  - **查询当前价格**：`getCurrentPrice()` returns uint。
+  - **查询结束时间**：`getEndTime()` returns uint。
+  - **查询最高出价者/获胜者**：`getHighestBidder()` returns address；`getWinner()` returns address。
+  - **查询最高出价**：`getHighestBid()` returns uint。
+  - **查询受益人**：`getBeneficiary()` returns address。
+  - **查询 tokenId**：`getTokenId()` returns uint256。
+  - **检查结束**：`isEnded()` returns bool。
+  - **出价**：`bid()` payable（发送 >= 当前价格的 ETH；立即结束拍卖，转移 NFT）。
+  - **提取（无用）**：`withdraw()` returns bool（总是 true）。
+  - **结束拍卖（仅受益人）**：`auctionEnd()`（如果无人出价）。
+  - 事件：HighestBidIncreased, AuctionEnded（可监听）。
+
+注意：所有合约继承的函数（如 _baseURI）是 internal，不对外暴露。拼写错误（如 getOnwerByCID, getAunctionByTokenId）需在 ABI 中匹配，否则调用失败。
+
+#### 3. **前端如何调用这些接口**
+   - **步骤示例（使用 React + ethers.js）**：
+     1. **连接钱包**：
+        ```javascript
+        import { ethers } from 'ethers';
+        import PromptNFTABI from './PromptNFT.json'; // 复制的 ABI
+        
+        const connectWallet = async () => {
+          if (window.ethereum) {
+            const provider = new ethers.BrowserProvider(window.ethereum);
+            await provider.send("eth_requestAccounts", []); // 请求连接
+            const signer = await provider.getSigner();
+            const userAddress = await signer.getAddress();
+            return { provider, signer, userAddress };
+          }
+        };
+        ```
+
+     2. **连接合约**：
+        ```javascript
+        const PROMPT_NFT_ADDRESS = '0x...'; // 从部署获取
+        const getPromptNFTContract = (signer) => {
+          return new ethers.Contract(PROMPT_NFT_ADDRESS, PromptNFTABI, signer);
+        };
+        ```
+
+     3. **调用方法**：
+        - **查询（无需 gas）**：
+          ```javascript
+          const contract = getPromptNFTContract(signer);
+          const owner = await contract.getOnwerByCID('QmTestCID');
+          console.log(owner);
+          ```
+        - **交易（需 gas，可能 payable）**：
+          ```javascript
+          const tx = await contract.awardItem(userAddress, 'QmNewCID');
+          await tx.wait(); // 等待确认
+          ```
+        - **Payable**：
+          ```javascript
+          const tx = await creditContract.purchaseCredits({ value: ethers.parseEther('0.001') });
+          await tx.wait();
+          ```
+        - **监听事件**：
+          ```javascript
+          contract.on('Transfer', (from, to, tokenId) => {
+            console.log(`NFT ${tokenId} transferred from ${from} to ${to}`);
+          });
+          ```
+        - **拍卖**：先调用 AuctionFactory 创建，获取新地址，然后连接 DutchAuction ABI 到那个地址，调用 bid 等。
+
+     4. **处理错误**：
+        - 使用 try-catch：`catch (error) { console.error(error.message); }`（如 "prompt already exists"）。
+        - 对于 approve：在创建 NFT 后，调用 approve(auctionAddr, tokenId) 才能在拍卖中转移。
+
+     5. **集成到 UI**：
+        - 在按钮点击时调用以上函数。
+        - 对于动态拍卖：调用 createAuction，返回地址后，存储并连接新合约。
+        - 网络：确保前端配置匹配部署网络（localhost:8545 或 testnet）。
+
+如果前端使用 web3.js，类似但语法不同（new web3.eth.Contract）。如果有具体前端代码或错误，提供更多细节我可以细化。
