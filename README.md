@@ -76,6 +76,8 @@ ls frontend-hardhat/deploy-local.json
 
 ### Step 4: Start the Frontend (Vite)
 
+PS:You maybe need to use npm install to first install all the required basic package for a web app. (That depends on PC environment).
+
 **Open Terminal 3:**
 
 ```bash
